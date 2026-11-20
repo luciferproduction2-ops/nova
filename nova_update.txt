@@ -1,0 +1,2 @@
+# Adresse des mises a jour automatiques de Nova.
+https://raw.githubusercontent.com/luciferproduction2-ops/nova/main/
