@@ -31,7 +31,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 12  # augmenter à chaque mise à jour publiée
+APP_VERSION = 13  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -367,6 +367,8 @@ ICONS = {
                     "M8 4v16 M16 4v16 M4 9h4 M4 15h4 M16 9h4 M16 15h4"],
     "keys":    ["", "M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z "
                     "M7 10h.01 M11 10h.01 M15 10h.01 M8 14h8"],
+    "audio":   ["", "M9 17.5V6l11-2v11.5 M9 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0 "
+                    "M20 15.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0 M9 9.5l11-2"],
     "clock":   ["", "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18 M12 7.5V12l3 2"],
     "brush":   ["", "M14.5 4.5l5 5L11 18H6v-5z M12 7l5 5"],
     "image":   ["", "M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z "
@@ -1523,7 +1525,7 @@ ApplicationWindow {
     property bool wasMaximized: false
     property bool playing: player.playbackState === MediaPlayer.PlayingState
     property int pendingResume: -1
-    property bool menuOpen: speedPop.opened || trackPop.opened || helpPop.opened || subPop.opened
+    property bool menuOpen: speedPop.opened || trackPop.opened || audioPop.opened || hdrPop.opened || helpPop.opened || subPop.opened
     property bool showBars: hasMedia && (controlsVisible || !playing)
     property int durTick: 0
     property bool hdrActive: backend.hdrMode > 0 && backend.hdrEnabled
@@ -2633,18 +2635,18 @@ ApplicationWindow {
                             }
                         }
                         Item { width: 4; height: 1 }
+                        // ---- piste audio
                         IconBtn {
-                            id: trackBtn
+                            id: audioBtn
                             anchors.verticalCenter: parent.verticalCenter
-                            icon: "subs"; tip: "Audio et sous-titres"
-                            active: backend.subtitleSource === "external" || player.activeSubtitleTrack >= 0
-                            onClicked: trackPop.open()
+                            icon: "audio"; tip: "Piste audio"
+                            onClicked: audioPop.open()
                             DarkPopup {
-                                id: trackPop
+                                id: audioPop
                                 x: Math.min(0, (parent.width - width) / 2)
                                 y: -height - 12
                                 contentItem: Column {
-                                    MenuHeader { text: "AUDIO" }
+                                    MenuHeader { text: "PISTE AUDIO" }
                                     Repeater {
                                         model: player.audioTracks
                                         delegate: MenuRow {
@@ -2652,7 +2654,7 @@ ApplicationWindow {
                                             required property int index
                                             text: win.trackName(modelData, index)
                                             checked: player.activeAudioTrack === index
-                                            onClicked: { player.activeAudioTrack = index; backend.flushAudio(); trackPop.close() }
+                                            onClicked: { player.activeAudioTrack = index; backend.flushAudio(); audioPop.close() }
                                         }
                                     }
                                     Text {
@@ -2660,7 +2662,21 @@ ApplicationWindow {
                                         text: "Aucune piste"; color: theme.muted; font.pixelSize: 13
                                         leftPadding: 12; topPadding: 4; bottomPadding: 6
                                     }
-                                    MenuSep {}
+                                }
+                            }
+                        }
+                        // ---- sous-titres
+                        IconBtn {
+                            id: trackBtn
+                            anchors.verticalCenter: parent.verticalCenter
+                            icon: "subs"; tip: "Sous-titres (C pour le style)"
+                            active: backend.subtitleSource === "external" || (backend.subtitleSource === "embedded" && player.activeSubtitleTrack >= 0)
+                            onClicked: trackPop.open()
+                            DarkPopup {
+                                id: trackPop
+                                x: Math.min(0, (parent.width - width) / 2)
+                                y: -height - 12
+                                contentItem: Column {
                                     MenuHeader { text: "SOUS-TITRES" }
                                     MenuRow {
                                         text: "Désactivés"
@@ -2687,10 +2703,37 @@ ApplicationWindow {
                                             onClicked: { backend.loadExternal(modelData.path); trackPop.close() }
                                         }
                                     }
-                                    MenuSep { visible: backend.hdrMode > 0 }
-                                    MenuHeader { visible: backend.hdrMode > 0; text: backend.hdrMode === 2 ? "IMAGE HDR (HLG)" : "IMAGE HDR" }
+                                    MenuSep {}
+                                    MenuRow { icon: "folder"; text: "Charger un fichier .srt…"; onClicked: { trackPop.close(); subDlg.open() } }
+                                    MenuRow { icon: "brush"; text: "Personnaliser l'apparence…"; onClicked: { trackPop.close(); subPop.open() } }
+                                }
+                            }
+                        }
+                        // ---- HDR (seulement pour les vidéos HDR)
+                        Rectangle {
+                            id: hdrPill
+                            visible: backend.hdrMode > 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: hdrText.implicitWidth + 20; height: 28; radius: 8
+                            color: hdma.containsMouse ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+                            border.color: backend.hdrEnabled ? theme.accent : Qt.rgba(1, 1, 1, 0.2)
+                            Text {
+                                id: hdrText
+                                anchors.centerIn: parent
+                                text: "HDR"
+                                color: backend.hdrEnabled ? "white" : theme.muted
+                                font.pixelSize: 12; font.weight: Font.Black; font.letterSpacing: 1
+                            }
+                            MouseArea { id: hdma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: hdrPop.open() }
+                            DarkPopup {
+                                id: hdrPop
+                                x: Math.min(0, (parent.width - width) / 2)
+                                y: -height - 12
+                                contentItem: Column {
+                                    MenuHeader { text: backend.hdrMode === 2 ? "IMAGE HDR (HLG)" : "IMAGE HDR" }
                                     Text {
-                                        visible: backend.hdrMode > 0
+                                        visible: true
                                         text: backend.hdrCalibration === "ok" ? "Calibré pour ta carte graphique ✓"
                                               : backend.hdrCalibration === "impossible" ? "Calibrage impossible : image d'origine affichée"
                                               : "Calibrage en cours…"
@@ -2698,40 +2741,39 @@ ApplicationWindow {
                                         font.pixelSize: 11; leftPadding: 12; bottomPadding: 4
                                     }
                                     MenuRow {
-                                        visible: backend.hdrMode > 0
+                                        width: 300
+                                        visible: true
                                         icon: "image"
                                         text: "Adapter le HDR à mon écran"
                                         checked: backend.hdrEnabled
                                         onClicked: backend.setHdrEnabled(!backend.hdrEnabled)
                                     }
                                     MenuRow {
-                                        visible: backend.hdrMode > 0 && backend.hdrEnabled
+                                        width: 300
+                                        visible: backend.hdrEnabled
                                         icon: "brush"
                                         text: "Adaptation dynamique (par scène)"
                                         checked: backend.hdrDynamic
                                         onClicked: backend.setHdrDynamic(!backend.hdrDynamic)
                                     }
-                                    Text { visible: backend.hdrMode > 0 && backend.hdrEnabled; text: "Couleurs"; color: theme.muted; font.pixelSize: 12; leftPadding: 12; topPadding: 4 }
+                                    Text { visible: backend.hdrEnabled; text: "Couleurs"; color: theme.muted; font.pixelSize: 12; leftPadding: 12; topPadding: 4 }
                                     Row {
-                                        visible: backend.hdrMode > 0 && backend.hdrEnabled
+                                        visible: backend.hdrEnabled
                                         leftPadding: 12; topPadding: 4; bottomPadding: 4
                                         spacing: 6
                                         Chip { text: "Douces"; selected: backend.hdrSaturation < 0.95; onClicked: backend.setHdrSaturation(0.85) }
                                         Chip { text: "Normales"; selected: backend.hdrSaturation >= 0.95 && backend.hdrSaturation <= 1.05; onClicked: backend.setHdrSaturation(1.0) }
                                         Chip { text: "Vives"; selected: backend.hdrSaturation > 1.05; onClicked: backend.setHdrSaturation(1.15) }
                                     }
-                                    Text { visible: backend.hdrMode > 0 && backend.hdrEnabled; text: "Luminosité"; color: theme.muted; font.pixelSize: 12; leftPadding: 12; topPadding: 4 }
+                                    Text { visible: backend.hdrEnabled; text: "Luminosité"; color: theme.muted; font.pixelSize: 12; leftPadding: 12; topPadding: 4 }
                                     Row {
-                                        visible: backend.hdrMode > 0 && backend.hdrEnabled
+                                        visible: backend.hdrEnabled
                                         leftPadding: 12; topPadding: 4; bottomPadding: 4
                                         spacing: 6
                                         Chip { text: "Plus sombre"; selected: backend.hdrBrightness < 0.9; onClicked: backend.setHdrBrightness(0.75) }
                                         Chip { text: "Normal"; selected: backend.hdrBrightness >= 0.9 && backend.hdrBrightness <= 1.1; onClicked: backend.setHdrBrightness(1.0) }
                                         Chip { text: "Plus clair"; selected: backend.hdrBrightness > 1.1; onClicked: backend.setHdrBrightness(1.4) }
                                     }
-                                    MenuSep {}
-                                    MenuRow { icon: "folder"; text: "Charger un fichier .srt…"; onClicked: { trackPop.close(); subDlg.open() } }
-                                    MenuRow { icon: "brush"; text: "Personnaliser les sous-titres…"; onClicked: { trackPop.close(); subPop.open() } }
                                 }
                             }
                         }

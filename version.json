@@ -1,5 +1,5 @@
 {
-  "version": 12,
-  "sha256": "450cba261be8c8cae424a747cb12ef579e54b462c5e2ba582b7e61810498eaf3",
-  "notes": "HDR mesuré automatiquement sur ta carte graphique"
+  "version": 13,
+  "sha256": "ef7062ed7c0d5f86952bc4783d5f59cd4b593d83215fe08c292e0d96c76cf859",
+  "notes": "boutons séparés audio / sous-titres / HDR"
 }
