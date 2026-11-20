@@ -8,6 +8,7 @@ version est publiée.
 """
 import base64
 import bisect
+import gc
 import hashlib
 import json
 import os
@@ -30,7 +31,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 7  # augmenter à chaque mise à jour publiée
+APP_VERSION = 8  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -326,11 +327,11 @@ class Backend(QObject):
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
-        self._relay = QVideoSink(self)          # reçoit les images du lecteur
-        self.player.setVideoSink(self._relay)
+        # les images vont directement du décodeur à l'affichage (sans passer par Python)
         self._display = None                    # sink de l'affichage (VideoOutput)
-        self._relay.videoFrameChanged.connect(self._on_frame)
-        self._relay.subtitleTextChanged.connect(self._on_embedded_sub)
+        self._clearing_sub = False
+        self._hdr_timer = QTimer(self, interval=250)
+        self._hdr_timer.timeout.connect(self._check_hdr)
         self.player.positionChanged.connect(self._on_position)
         self.player.sourceChanged.connect(self._on_source)
         self.player.playbackStateChanged.connect(self._on_state)
@@ -380,10 +381,17 @@ class Backend(QObject):
     @Slot(QObject)
     def setDisplaySink(self, sink):
         self._display = sink
+        self.player.setVideoSink(sink)
+        sink.subtitleTextChanged.connect(self._on_embedded_sub)
 
-    def _on_frame(self, frame):
-        if not self._hdr_checked and frame.isValid():
+    def _check_hdr(self):
+        if self._display is None or self._hdr_checked:
+            self._hdr_timer.stop()
+            return
+        frame = self._display.videoFrame()
+        if frame.isValid():
             self._hdr_checked = True
+            self._hdr_timer.stop()
             tr = _ev(frame.surfaceFormat().colorTransfer())
             mode = 1 if tr == _ev(QVideoFrameFormat.ColorTransfer_ST2084) else \
                    2 if tr == _ev(QVideoFrameFormat.ColorTransfer_STD_B67) else 0
@@ -392,12 +400,6 @@ class Backend(QObject):
                 self.hdrChanged.emit()
             if mode:
                 log(f"vidéo HDR détectée (mode {mode})")
-        if self._display is None:
-            return
-        f = QVideoFrame(frame)
-        if f.subtitleText():
-            f.setSubtitleText("")   # on dessine nous-mêmes les sous-titres
-        self._display.setVideoFrame(f)
 
     # ================================================================ fichiers
     @staticmethod
@@ -684,6 +686,13 @@ class Backend(QObject):
             self.subtitleTextChanged.emit()
 
     def _on_embedded_sub(self, text):
+        if self._clearing_sub:
+            return
+        if text and self._display is not None:
+            # on efface le texte du moteur (sinon il le dessinerait aussi) : Nova le dessine lui-même
+            self._clearing_sub = True
+            self._display.setSubtitleText("")
+            self._clearing_sub = False
         if self._sub_source == "embedded":
             self._set_sub(to_styled(text))
 
@@ -702,6 +711,7 @@ class Backend(QObject):
 
     def _on_source(self, url):
         self._hdr_checked = False
+        self._hdr_timer.start()
         if self._hdr_mode:
             self._hdr_mode = 0
             self.hdrChanged.emit()
@@ -853,7 +863,9 @@ class Backend(QObject):
     @Slot(str, int, result=str)
     def screenshot(self, name, pos):
         try:
-            frame = self._relay.videoFrame()
+            if self._display is None:
+                return ""
+            frame = self._display.videoFrame()
             if not frame.isValid():
                 return ""
             img = frame.toImage()
@@ -2614,6 +2626,10 @@ def main(startup_message=""):
     window = engine.rootObjects()[0]
     dark_titlebar(window)
     app.aboutToQuit.connect(backend.shutdown)
+    # moins de pauses du ramasse-miettes Python pendant la lecture
+    gc.collect()
+    gc.freeze()
+    gc.set_threshold(20000, 50, 100)
     code = app.exec()
     backend.player.stop()
     return code
