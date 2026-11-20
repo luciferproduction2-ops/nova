@@ -32,7 +32,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 15  # augmenter à chaque mise à jour publiée
+APP_VERSION = 16  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -346,6 +346,47 @@ STATS_QSB = (
     "tXvpHvuwePWFaHJaz9JgoXoBBpLtXoGR2Dng0zTSSGliW/kQTVk8XwM79r/ld2KoY/Tj+ShNlIen+0DNQX0/RgxJ3f+3ZJADxQF9"
     "V0ZS7wx6KFSRZ2vQ9cOU0RsLqGk8W3PIXp9RTT5oIkYyw5doaNF6WJVPosCjKHNERsS3aiTerMFmqS/79u3bh/9nAvWXQpo3P8cy"
     "7XqsTX3x9//mhFaS"
+)
+CLEAN_QSB = (
+    "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"
 )
 PROBE_QSB = (
     "AAAS1nic7Vhbb9xEFD57S1K3paX3QinTphRvmzjO5kLZ7YaghEulVqmaqCCtIsvx2hvDrr21x2HTKuImJH4B4pEfwA/kBYHOzLF3"
@@ -833,6 +874,7 @@ class Backend(QObject):
         self._tone_url = self._write_shader("tonemap", TONEMAP_QSB)
         self._stats_url = self._write_shader("stats", STATS_QSB)
         self._probe_url = self._write_shader("probe", PROBE_QSB)
+        self._clean_url = self._write_shader("clean", CLEAN_QSB)
         # calibrage : mesuré au démarrage sur la carte graphique de l'utilisateur
         self._cal_sink = None
         self._cal_frame = None
@@ -1451,6 +1493,9 @@ class Backend(QObject):
     def _get_stats_url(self):
         return self._stats_url
 
+    def _get_clean_url(self):
+        return self._clean_url
+
     def _get_hdr_saturation(self):
         return self._hdr_saturation
 
@@ -1462,6 +1507,7 @@ class Backend(QObject):
     hdrBrightness = Property(float, _get_hdr_brightness, notify=hdrChanged)
     toneShader = Property(str, _get_tone_url, constant=True)
     statsShader = Property(str, _get_stats_url, constant=True)
+    cleanShader = Property(str, _get_clean_url, constant=True)
     hdrSaturation = Property(float, _get_hdr_saturation, notify=hdrChanged)
     hdrDynamic = Property(bool, _get_hdr_dynamic, notify=hdrChanged)
 
@@ -2510,11 +2556,32 @@ ApplicationWindow {
                 Component.onCompleted: backend.setDisplaySink(videoSink)
             }
             // conversion HDR -> écran normal (tone mapping sur la carte graphique)
+            // 1) image brute de Qt, pixel par pixel (sans flou, pour ne pas étaler les pixels invalides)
             ShaderEffectSource {
-                id: videoTex
+                id: rawTex
                 anchors.fill: videoOut
                 sourceItem: (win.hdrActive || backend.hdrMeasuring) ? videoOut : null
                 hideSource: win.hdrActive || backend.hdrMeasuring
+                live: true
+                visible: false
+                smooth: false
+                format: backend.hdrTexFloat ? ShaderEffectSource.RGBA16F : ShaderEffectSource.RGBA8
+            }
+            // 2) réparation des pixels invalides des zones sombres (comme VLC)
+            ShaderEffect {
+                id: cleanFx
+                anchors.fill: videoOut
+                visible: win.hdrActive || backend.hdrMeasuring
+                property variant source: rawTex
+                property point texel: Qt.point(1 / Math.max(1, width * Screen.devicePixelRatio),
+                                               1 / Math.max(1, height * Screen.devicePixelRatio))
+                fragmentShader: backend.cleanShader
+            }
+            ShaderEffectSource {
+                id: videoTex
+                anchors.fill: videoOut
+                sourceItem: (win.hdrActive || backend.hdrMeasuring) ? cleanFx : null
+                hideSource: true
                 live: true
                 visible: false
                 smooth: true

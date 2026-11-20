@@ -1,5 +1,5 @@
 {
-  "version": 15,
-  "sha256": "46ca37f8ed39146cfcddb5a0f97162bad2cdd66772791e69faf2f7e9a6ce8fe5",
-  "notes": "ombres détaillées (proche de VLC), capture HDR fidèle"
+  "version": 16,
+  "sha256": "d78b3ba801baf08d786de8a6a38f146317ec4b5af8ae411599e081f1aa1c559f",
+  "notes": "Zones sombres HDR : suppression des petits artefacts (pixels noirs/tachés), rendu propre comme VLC."
 }
