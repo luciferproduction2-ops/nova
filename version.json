@@ -1,5 +1,5 @@
 {
-  "version": 14,
-  "sha256": "b2a9fca58c92ce9e768231d131acb88ecd888a622150777e7158db0b13bf6251",
-  "notes": "HLG, tramage anti-bandes, mesure HDR plus précise"
+  "version": 15,
+  "sha256": "46ca37f8ed39146cfcddb5a0f97162bad2cdd66772791e69faf2f7e9a6ce8fe5",
+  "notes": "ombres détaillées (proche de VLC), capture HDR fidèle"
 }
