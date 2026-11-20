@@ -6,6 +6,7 @@ Ce fichier est celui qui se met à jour automatiquement : il est chargé par
 nova.py (le lanceur), qui le télécharge depuis GitHub quand une nouvelle
 version est publiée.
 """
+import base64
 import bisect
 import hashlib
 import json
@@ -25,11 +26,11 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6 import QtMultimedia, QtQuick  # noqa: F401  (embarque le moteur vidéo dans le .exe)
 from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAudioOutput,
                                   QAudioSink, QMediaDevices, QMediaPlayer, QVideoFrame,
-                                  QVideoSink)
+                                  QVideoFrameFormat, QVideoSink)
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 5  # augmenter à chaque mise à jour publiée
+APP_VERSION = 6  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -58,6 +59,69 @@ def log(msg):
             f.write(msg.rstrip() + "\n")
     except OSError:
         pass
+
+# Shader de conversion HDR -> écran normal (tone mapping), compilé pour DirectX/OpenGL/Metal
+TONEMAP_QSB = (
+    "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"
+)
 
 THEME = {
     "bg": "#0A0A0F",
@@ -251,6 +315,7 @@ class Backend(QObject):
     postersChanged = Signal()
     durationReady = Signal(str, int)
     boostFailed = Signal()
+    hdrChanged = Signal()
 
     def __init__(self, initial_files):
         super().__init__()
@@ -293,6 +358,16 @@ class Backend(QObject):
         except (TypeError, ValueError):
             self._style = dict(SUB_STYLE_DEFAULT)
 
+        # HDR
+        self._hdr_mode = 0            # 0 = SDR, 1 = PQ (HDR10/HDR10+/Dolby Vision), 2 = HLG
+        self._hdr_checked = False
+        self._hdr_enabled = str(self._s.value("hdrTonemap", "true")).lower() != "false"
+        try:
+            self._hdr_brightness = float(self._s.value("hdrBrightness", 1.0))
+        except (TypeError, ValueError):
+            self._hdr_brightness = 1.0
+        self._tone_url = self._write_shader()
+
         # durées
         self._prober = Prober(self._s, self)
         self._prober.durationReady.connect(self.durationReady)
@@ -307,6 +382,16 @@ class Backend(QObject):
         self._display = sink
 
     def _on_frame(self, frame):
+        if not self._hdr_checked and frame.isValid():
+            self._hdr_checked = True
+            tr = _ev(frame.surfaceFormat().colorTransfer())
+            mode = 1 if tr == _ev(QVideoFrameFormat.ColorTransfer_ST2084) else \
+                   2 if tr == _ev(QVideoFrameFormat.ColorTransfer_STD_B67) else 0
+            if mode != self._hdr_mode:
+                self._hdr_mode = mode
+                self.hdrChanged.emit()
+            if mode:
+                log(f"vidéo HDR détectée (mode {mode})")
         if self._display is None:
             return
         f = QVideoFrame(frame)
@@ -616,6 +701,10 @@ class Backend(QObject):
             self._set_sub("")
 
     def _on_source(self, url):
+        self._hdr_checked = False
+        if self._hdr_mode:
+            self._hdr_mode = 0
+            self.hdrChanged.emit()
         self._cues, self._starts, self._cue_idx = [], [], -1
         self._ext_name = ""
         self._sub_source = "embedded"
@@ -784,6 +873,50 @@ class Backend(QObject):
             print("Capture impossible :", e, file=sys.stderr)
             return ""
 
+    # ================================================================ HDR
+    def _write_shader(self):
+        try:
+            root = os.environ.get("LOCALAPPDATA") or os.path.join(Path.home(), ".local", "share")
+            d = Path(root) / "Nova" / "app"
+            d.mkdir(parents=True, exist_ok=True)
+            data = base64.b64decode("".join(TONEMAP_QSB))
+            f = d / ("tonemap-%s.frag.qsb" % hashlib.md5(data).hexdigest()[:8])
+            if not f.exists():
+                f.write_bytes(data)
+            return QUrl.fromLocalFile(str(f)).toString()
+        except Exception as e:  # noqa: BLE001
+            log(f"shader HDR indisponible : {e!r}")
+            return ""
+
+    def _get_hdr_mode(self):
+        return self._hdr_mode
+
+    def _get_hdr_enabled(self):
+        return self._hdr_enabled and bool(self._tone_url)
+
+    def _get_hdr_brightness(self):
+        return self._hdr_brightness
+
+    def _get_tone_url(self):
+        return self._tone_url
+
+    hdrMode = Property(int, _get_hdr_mode, notify=hdrChanged)
+    hdrEnabled = Property(bool, _get_hdr_enabled, notify=hdrChanged)
+    hdrBrightness = Property(float, _get_hdr_brightness, notify=hdrChanged)
+    toneShader = Property(str, _get_tone_url, constant=True)
+
+    @Slot(bool)
+    def setHdrEnabled(self, on):
+        self._hdr_enabled = bool(on)
+        self._s.setValue("hdrTonemap", "true" if on else "false")
+        self.hdrChanged.emit()
+
+    @Slot(float)
+    def setHdrBrightness(self, v):
+        self._hdr_brightness = max(0.4, min(2.5, float(v)))
+        self._s.setValue("hdrBrightness", self._hdr_brightness)
+        self.hdrChanged.emit()
+
     @Slot(result="QPointF")
     def cursorPos(self):
         """Position réelle de la souris à l'écran (ne dépend pas du survol)."""
@@ -861,6 +994,8 @@ ApplicationWindow {
     property bool menuOpen: speedPop.opened || trackPop.opened || helpPop.opened || subPop.opened
     property bool showBars: hasMedia && (controlsVisible || !playing)
     property int durTick: 0
+    property bool hdrActive: backend.hdrMode > 0 && backend.hdrEnabled
+    property bool hdrShown: false
     readonly property var speeds: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3]
     readonly property var subColors: ["#FFFFFF", "#FFE45C", "#7DF9FF", "#9CFF8A", "#FF9BD2", "#C9B8FF"]
 
@@ -1289,6 +1424,8 @@ ApplicationWindow {
         if (queue.count > 1) parts.push("Vidéo " + (currentIndex + 1) + " sur " + queue.count)
         var res = player.metaData.value(MediaMetaData.Resolution)
         if (res && res.width > 0) parts.push(res.width + " × " + res.height)
+        if (backend.hdrMode === 1) parts.push("HDR")
+        else if (backend.hdrMode === 2) parts.push("HDR · HLG")
         return parts.join("   ·   ")
     }
     function delayText(ms) { return (ms > 0 ? "+" : ms < 0 ? "−" : "") + (Math.abs(ms) / 1000).toFixed(1).replace(".", ",") + " s" }
@@ -1333,6 +1470,13 @@ ApplicationWindow {
             win.durTick++
         }
         function onBoostFailed() { toast.show("Amplification indisponible sur cet appareil", 3000) }
+        function onHdrChanged() {
+            if (backend.hdrMode > 0 && !win.hdrShown) {
+                win.hdrShown = true
+                toast.show(backend.hdrEnabled ? "Vidéo HDR détectée · image adaptée à ton écran" : "Vidéo HDR détectée · conversion désactivée", 3000)
+            }
+            if (backend.hdrMode === 0) win.hdrShown = false
+        }
     }
 
     Timer {
@@ -1577,6 +1721,25 @@ ApplicationWindow {
                 anchors.fill: parent
                 fillMode: VideoOutput.PreserveAspectFit
                 Component.onCompleted: backend.setDisplaySink(videoSink)
+            }
+            // conversion HDR -> écran normal (tone mapping sur la carte graphique)
+            ShaderEffectSource {
+                id: videoTex
+                anchors.fill: videoOut
+                sourceItem: win.hdrActive ? videoOut : null
+                hideSource: win.hdrActive
+                live: true
+                visible: false
+                smooth: true
+                format: ShaderEffectSource.RGBA16F
+            }
+            ShaderEffect {
+                anchors.fill: videoOut
+                visible: win.hdrActive
+                property variant source: videoTex
+                property real mode: backend.hdrMode
+                property real brightness: backend.hdrBrightness
+                fragmentShader: backend.toneShader
             }
 
             // détecte la souris partout sur la scène, même au-dessus des boutons
@@ -1894,6 +2057,23 @@ ApplicationWindow {
                                             checked: backend.subtitleSource === "external" && backend.externalName === modelData.name
                                             onClicked: { backend.loadExternal(modelData.path); trackPop.close() }
                                         }
+                                    }
+                                    MenuSep { visible: backend.hdrMode > 0 }
+                                    MenuHeader { visible: backend.hdrMode > 0; text: backend.hdrMode === 2 ? "IMAGE HDR (HLG)" : "IMAGE HDR" }
+                                    MenuRow {
+                                        visible: backend.hdrMode > 0
+                                        icon: "image"
+                                        text: "Adapter le HDR à mon écran"
+                                        checked: backend.hdrEnabled
+                                        onClicked: backend.setHdrEnabled(!backend.hdrEnabled)
+                                    }
+                                    Row {
+                                        visible: backend.hdrMode > 0 && backend.hdrEnabled
+                                        leftPadding: 12; topPadding: 4; bottomPadding: 4
+                                        spacing: 6
+                                        Chip { text: "Plus sombre"; selected: backend.hdrBrightness < 0.9; onClicked: backend.setHdrBrightness(0.75) }
+                                        Chip { text: "Normal"; selected: backend.hdrBrightness >= 0.9 && backend.hdrBrightness <= 1.1; onClicked: backend.setHdrBrightness(1.0) }
+                                        Chip { text: "Plus clair"; selected: backend.hdrBrightness > 1.1; onClicked: backend.setHdrBrightness(1.4) }
                                     }
                                     MenuSep {}
                                     MenuRow { icon: "folder"; text: "Charger un fichier .srt…"; onClicked: { trackPop.close(); subDlg.open() } }

@@ -1,5 +1,5 @@
 {
-  "version": 5,
-  "sha256": "59df56801adb5bc689d8bf94922d4e27e4df0c8db29fea09a35c33c8fbd0a65b",
-  "notes": "les contrôles se cachent quand la souris ne bouge plus"
+  "version": 6,
+  "sha256": "e4cdc2862574234dcf3783b4dde72e0e29a6651a31898af0bd858111ae5cea4c",
+  "notes": "prise en charge des vidéos HDR"
 }
