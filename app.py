@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (QObject, Property, QSettings, QStandardPaths, QTimer,
                             QUrl, Signal, Slot, QPointF, QRectF, Qt)
-from PySide6.QtGui import (QColor, QDesktopServices, QGuiApplication, QIcon,
+from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QGuiApplication, QIcon,
                            QLinearGradient, QPainter, QPainterPath, QPixmap)
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6 import QtMultimedia, QtQuick  # noqa: F401  (embarque le moteur vidéo dans le .exe)
@@ -29,7 +29,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 2  # augmenter à chaque mise à jour publiée
+APP_VERSION = 3  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -734,6 +734,11 @@ class Backend(QObject):
             print("Capture impossible :", e, file=sys.stderr)
             return ""
 
+    @Slot(result="QPointF")
+    def cursorPos(self):
+        """Position réelle de la souris à l'écran (ne dépend pas du survol)."""
+        return QPointF(QCursor.pos())
+
     def shutdown(self):
         self._stop_boost()
 
@@ -1284,7 +1289,11 @@ ApplicationWindow {
         id: hideTimer
         interval: 2600
         onTriggered: {
-            var overBar = stageHover.hovered && stageHover.point.position.y > stage.height - bottomBar.height - 12
+            var c = backend.cursorPos()
+            var pb = bottomBar.mapFromGlobal(c.x, c.y)
+            var pt = topBar.mapFromGlobal(c.x, c.y)
+            var overBar = (pb.x >= 0 && pb.x <= bottomBar.width && pb.y >= -12 && pb.y <= bottomBar.height)
+                       || (pt.x >= 0 && pt.x <= topBar.width && pt.y >= 0 && pt.y <= topBar.height)
             if (win.playing && !barHover.hovered && !overBar && !win.menuOpen) win.controlsVisible = false
             else restart()
         }
@@ -1531,7 +1540,8 @@ ApplicationWindow {
                 anchors.fill: parent
                 enabled: win.hasMedia
                 hoverEnabled: true
-                cursorShape: win.showBars ? Qt.ArrowCursor : Qt.BlankCursor
+                // le curseur ne se cache qu'en plein écran, jamais en mode fenêtré
+                cursorShape: (win.showBars || !win.isFull) ? Qt.ArrowCursor : Qt.BlankCursor
                 onClicked: clickTimer.restart()
                 onDoubleClicked: { clickTimer.stop(); win.toggleFull() }
                 onWheel: (wheel) => win.changeVolume(wheel.angleDelta.y > 0 ? 0.05 : -0.05)
@@ -1553,6 +1563,7 @@ ApplicationWindow {
 
             // barre du haut
             Item {
+                id: topBar
                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                 height: 96
                 opacity: win.showBars ? 1 : 0

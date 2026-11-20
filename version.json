@@ -1,5 +1,5 @@
 {
-  "version": 2,
-  "sha256": "a2a3039b1a1c962626f65c02753597dd9358efe2666304f8415fb79f5e029165",
-  "notes": "boost 300 %, sous-titres perso, durée totale, nouvel accueil"
+  "version": 3,
+  "sha256": "9a52c4de7ec9efac68021822684b308393bd93ce8fd6cd138eaa7453acdb3b35",
+  "notes": "correction du curseur"
 }
