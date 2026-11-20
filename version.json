@@ -1,5 +1,5 @@
 {
-  "version": 6,
-  "sha256": "e4cdc2862574234dcf3783b4dde72e0e29a6651a31898af0bd858111ae5cea4c",
-  "notes": "prise en charge des vidéos HDR"
+  "version": 7,
+  "sha256": "5d8c8686171491c0fc64ce00cad3e1067bb76b3a0eb17d36bf209223dde10e62",
+  "notes": "correction de l image HDR trop blanche"
 }

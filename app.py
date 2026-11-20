@@ -30,7 +30,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 6  # augmenter à chaque mise à jour publiée
+APP_VERSION = 7  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -1731,7 +1731,9 @@ ApplicationWindow {
                 live: true
                 visible: false
                 smooth: true
-                format: ShaderEffectSource.RGBA16F
+                // texture 8 bits comme l'écran : avec une texture flottante, Qt (DirectX)
+                // convertit déjà la vidéo en lumière linéaire et l'image sort toute blanche
+                format: ShaderEffectSource.RGBA8
             }
             ShaderEffect {
                 anchors.fill: videoOut
