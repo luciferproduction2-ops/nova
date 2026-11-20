@@ -1,5 +1,5 @@
 {
-  "version": 4,
-  "sha256": "8348b15fe0472d664ed045200d5c4030fdf8059edc5242be4db14d193d413a65",
-  "notes": "amplification du son corrigée"
+  "version": 5,
+  "sha256": "59df56801adb5bc689d8bf94922d4e27e4df0c8db29fea09a35c33c8fbd0a65b",
+  "notes": "les contrôles se cachent quand la souris ne bouge plus"
 }

@@ -29,7 +29,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 4  # augmenter à chaque mise à jour publiée
+APP_VERSION = 5  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -1582,7 +1582,16 @@ ApplicationWindow {
             // détecte la souris partout sur la scène, même au-dessus des boutons
             HoverHandler {
                 id: stageHover
-                onPointChanged: if (win.hasMedia) win.poke()
+                property real lastX: -1
+                property real lastY: -1
+                // Qt renvoie un « survol » à chaque image de la vidéo même si la souris
+                // ne bouge pas : on ne réagit qu'à un vrai déplacement
+                onPointChanged: {
+                    var p = point.scenePosition
+                    if (Math.abs(p.x - lastX) + Math.abs(p.y - lastY) < 3) return
+                    lastX = p.x; lastY = p.y
+                    if (win.hasMedia) win.poke()
+                }
             }
 
             MouseArea {
