@@ -1,5 +1,5 @@
 {
-  "version": 8,
-  "sha256": "32c5d00199900c99247462aea46ab5159c130664cd793914ef80b4e6fa206640",
-  "notes": "lecture plus fluide, HDR corrigé"
+  "version": 9,
+  "sha256": "27df89db6aada68f34f60ae94bb235b63ba7d94394308e93f152b4dc6852ee72",
+  "notes": "HDR dynamique, couleurs plus naturelles"
 }
