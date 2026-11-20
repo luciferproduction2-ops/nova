@@ -29,7 +29,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 3  # augmenter à chaque mise à jour publiée
+APP_VERSION = 4  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -38,6 +38,26 @@ VIDEO_EXT = {
 SUB_EXT = {".srt", ".vtt"}
 IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 MAX_GAIN = 3.0
+
+
+def _ev(x):
+    """Valeur entière d'une énumération Qt (QAudio et QtAudio sont deux classes différentes)."""
+    return getattr(x, "value", x)
+
+
+AUDIO_NO_ERROR, AUDIO_UNDERRUN = 0, 3   # QtAudio.Error.NoError / UnderrunError
+AUDIO_STOPPED = 2                        # QtAudio.State.StoppedState
+
+
+def log(msg):
+    try:
+        root = os.environ.get("LOCALAPPDATA") or os.path.join(Path.home(), ".local", "share")
+        d = Path(root) / "Nova" / "app"
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / "nova.log", "a", encoding="utf-8") as f:
+            f.write(msg.rstrip() + "\n")
+    except OSError:
+        pass
 
 THEME = {
     "bg": "#0A0A0F",
@@ -433,29 +453,49 @@ class Backend(QObject):
     # --- amplificateur (au-delà de 100 %)
     def _start_boost(self):
         try:
+            dev = QMediaDevices.defaultAudioOutput()
+            if dev.isNull():
+                log("amplification : aucune sortie audio par défaut")
+                return False
             fmt = QAudioFormat()
             fmt.setSampleRate(48000)
             fmt.setChannelCount(2)
             fmt.setSampleFormat(QAudioFormat.Int16)
-            dev = QMediaDevices.defaultAudioOutput()
-            if dev.isNull():
+            if not dev.isFormatSupported(fmt):
+                pref = dev.preferredFormat()
+                fmt.setSampleRate(pref.sampleRate() or 48000)
+                fmt.setChannelCount(min(2, max(1, pref.channelCount())) if pref.channelCount() else 2)
+                for sf in (QAudioFormat.Int16, QAudioFormat.Float, QAudioFormat.Int32):
+                    fmt.setSampleFormat(sf)
+                    if dev.isFormatSupported(fmt):
+                        break
+                else:
+                    fmt = pref
+            sf = _ev(fmt.sampleFormat())
+            kind = {_ev(QAudioFormat.Int16): "h", _ev(QAudioFormat.Int32): "i", _ev(QAudioFormat.Float): "f"}.get(sf)
+            if kind is None:
+                log(f"amplification : format audio non géré ({fmt.sampleFormat()})")
                 return False
+            bps = fmt.bytesPerFrame() * fmt.sampleRate()
             sink = QAudioSink(dev, fmt, self)
-            sink.setBufferSize(int(48000 * 4 * 0.15))   # ~150 ms
+            sink.setBufferSize(int(bps * 0.15))   # ~150 ms
             io = sink.start()
-            if io is None or sink.error() != QAudio.NoError:
+            if io is None or _ev(sink.error()) != AUDIO_NO_ERROR:
+                log(f"amplification : la sortie audio refuse de démarrer ({sink.error()}) format={fmt}")
                 sink.deleteLater()
                 return False
             out = QAudioBufferOutput(fmt, self)
             out.audioBufferReceived.connect(self._on_audio_buffer)
             self.player.setAudioBufferOutput(out)
-            self._boost = {"sink": sink, "io": io, "out": out, "pending": bytearray(), "primed": False}
+            self._boost = {"sink": sink, "io": io, "out": out, "pending": bytearray(), "primed": False,
+                           "kind": kind, "bps": bps, "frame": fmt.bytesPerFrame()}
             sink.stateChanged.connect(self._on_boost_state)
             if self.player.playbackState() != QMediaPlayer.PlayingState:
                 sink.suspend()
+            log(f"amplification active : {dev.description()} · {fmt.sampleRate()} Hz · {kind}")
             return True
         except Exception as e:  # noqa: BLE001
-            print("Amplification indisponible :", e, file=sys.stderr)
+            log(f"amplification indisponible : {e!r}")
             return False
 
     def _stop_boost(self):
@@ -476,7 +516,8 @@ class Backend(QObject):
 
     def _on_boost_state(self, state):
         b = self._boost
-        if b and state == QAudio.StoppedState and b["sink"].error() not in (QAudio.NoError, QAudio.UnderrunError):
+        if b and _ev(state) == AUDIO_STOPPED and _ev(b["sink"].error()) not in (AUDIO_NO_ERROR, AUDIO_UNDERRUN):
+            log(f"amplification arrêtée : {b['sink'].error()}")
             self._stop_boost()
             self._gain = 1.0
             self._apply_volume()
@@ -496,24 +537,33 @@ class Backend(QObject):
         if not data:
             return
         g = self._gain
-        samples = array("h")
-        samples.frombytes(data[: len(data) - len(data) % 2])
-        hi, lo = 32767, -32768
-        samples = array("h", [hi if v > hi else lo if v < lo else v
-                              for v in [int(x * g) for x in samples]])
+        kind = b["kind"]
+        size = array(kind).itemsize
+        samples = array(kind)
+        samples.frombytes(data[: len(data) - len(data) % size])
+        if kind == "f":
+            samples = array("f", [1.0 if v > 1.0 else -1.0 if v < -1.0 else v
+                                  for v in [x * g for x in samples]])
+        else:
+            hi = 32767 if kind == "h" else 2147483647
+            lo = -hi - 1
+            samples = array(kind, [hi if v > hi else lo if v < lo else v
+                                   for v in [int(x * g) for x in samples]])
         pend = b["pending"]
         pend += samples.tobytes()
-        max_pending = 48000 * 4 // 3            # ~330 ms au maximum
+        bps, frame = b["bps"], b["frame"]
+        max_pending = bps // 3                   # ~330 ms au maximum
         if len(pend) > max_pending:
-            del pend[: len(pend) - max_pending]
+            cut = len(pend) - max_pending
+            del pend[: cut - cut % frame]
         if not b["primed"]:
-            if len(pend) < 48000 * 4 // 25:     # on attend ~40 ms avant de démarrer
+            if len(pend) < bps // 25:            # on attend ~40 ms avant de démarrer
                 return
             b["primed"] = True
         free = b["sink"].bytesFree()
         if free > 0 and pend:
             n = min(free, len(pend))
-            n -= n % 4
+            n -= n % frame
             if n:
                 b["io"].write(bytes(pend[:n]))
                 del pend[:n]
