@@ -1,5 +1,5 @@
 {
-  "version": 13,
-  "sha256": "ef7062ed7c0d5f86952bc4783d5f59cd4b593d83215fe08c292e0d96c76cf859",
-  "notes": "boutons séparés audio / sous-titres / HDR"
+  "version": 14,
+  "sha256": "b2a9fca58c92ce9e768231d131acb88ecd888a622150777e7158db0b13bf6251",
+  "notes": "HLG, tramage anti-bandes, mesure HDR plus précise"
 }
