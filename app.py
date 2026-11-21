@@ -32,7 +32,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 18  # augmenter à chaque mise à jour publiée
+APP_VERSION = 19  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -1070,45 +1070,73 @@ class Limiter:
 # minutes de l'épisode avec celle d'un autre épisode du même dossier. La musique
 # du générique est identique d'un épisode à l'autre, le reste non.
 FP_RATE = 8000             # Hz, mono
-FP_WIN = 1600              # fenêtre de 0,2 s
-FP_HOP = 400               # une mesure toutes les 0,05 s
+FP_BLOCK = 80              # bloc de 10 ms
+FP_WIN_BLOCKS = 20         # fenêtre de 0,2 s
+FP_DELTA = 10              # comparaison avec la mesure 0,1 s avant
+FP_HOP = FP_BLOCK
+FP_WIN = FP_BLOCK * FP_WIN_BLOCKS
 FP_SECONDS = 1200          # on analyse les 20 premières minutes
 EPISODE_RE = re.compile(r"(s\d{1,2}\s*[ex]\s*\d{1,3}|\b\d{1,2}x\d{1,3}\b|[ée]p(isode)?\s*\.?\s*\d{1,3}|\be\d{1,3}\b)", re.I)
 
 
 def fp_features(pcm):
-    """PCM 16 bits mono 8 kHz -> (octets de signature, masque son présent)."""
+    """PCM 16 bits mono 8 kHz -> (octets de signature, masque son présent).
+    Une mesure toutes les 10 ms sur une fenêtre de 0,2 s (calage très fin)."""
     try:
         import audioop as ao
     except Exception:  # noqa: BLE001
         ao = None
-    feats = []
-    n = (len(pcm) // 2 - FP_WIN) // FP_HOP
-    for k in range(max(0, n)):
-        f = pcm[k * FP_HOP * 2:(k * FP_HOP + FP_WIN) * 2]
+    B = FP_BLOCK
+    nb = len(pcm) // 2 // B
+    blocks = []                     # carrés cumulés par bloc de 10 ms
+    for k in range(nb):
+        f = pcm[k * B * 2:(k + 1) * B * 2 + 4]
         if ao is not None:
-            e0 = ao.rms(f, 2)
-            d1 = ao.add(f[2:], ao.mul(f[:-2], 2, -1), 2)
-            e1 = ao.rms(d1, 2)
+            fb = f[:B * 2]
+            e0 = ao.rms(fb, 2) ** 2
+            d1 = ao.add(f[2:B * 2 + 2], ao.mul(f[:B * 2], 2, -1), 2) if len(f) >= B * 2 + 2 else fb
+            e1 = ao.rms(d1, 2) ** 2
             d2 = ao.add(d1[2:], ao.mul(d1[:-2], 2, -1), 2)
-            e2 = ao.rms(d2, 2)
-            e3 = ao.rms(ao.ratecv(f, 2, 1, FP_RATE, 800, None)[0], 2)
-            z = ao.cross(f, 2)
+            e2 = ao.rms(d2, 2) ** 2
+            s3 = ao.avg(fb, 2)
+            z = ao.cross(fb, 2)
         else:
-            a = array("h"); a.frombytes(f)
-            a = a[::4]
-            e0 = math.sqrt(sum(v * v for v in a) / len(a))
-            d = [a[i + 1] - a[i] for i in range(len(a) - 1)]
-            e1 = math.sqrt(sum(v * v for v in d) / len(d))
+            a = array("h"); a.frombytes(f[:B * 2])
+            e0 = sum(v * v for v in a) / B
+            d = [a[i + 1] - a[i] for i in range(B - 1)]
+            e1 = sum(v * v for v in d) / len(d)
             dd = [d[i + 1] - d[i] for i in range(len(d) - 1)]
-            e2 = math.sqrt(sum(v * v for v in dd) / len(dd))
-            e3 = abs(sum(a)) / len(a)
-            z = sum(1 for i in range(len(a) - 1) if (a[i] < 0) != (a[i + 1] < 0))
-        feats.append((e0, e1, e2, e3, z, e1 / (e0 + 1.0), e3 / (e0 + 1.0), e2 / (e1 + 1.0)))
+            e2 = sum(v * v for v in dd) / len(dd)
+            s3 = sum(a) / B
+            z = sum(1 for i in range(B - 1) if (a[i] < 0) != (a[i + 1] < 0))
+        blocks.append((e0, e1, e2, s3, z))
+    W = FP_WIN_BLOCKS
+    feats = []
+    acc = [0.0] * 5
+    lp = deque()
+    for k, bl in enumerate(blocks):
+        for i in range(5):
+            acc[i] += bl[i] if i != 3 else 0.0
+        lp.append(bl[3])
+        if k >= W:
+            old = blocks[k - W]
+            for i in range(5):
+                if i != 3:
+                    acc[i] -= old[i]
+            lp.popleft()
+        if k >= W - 1:
+            e0 = math.sqrt(max(acc[0], 0) / W)
+            e1 = math.sqrt(max(acc[1], 0) / W)
+            e2 = math.sqrt(max(acc[2], 0) / W)
+            # « basses » : moyenne des niveaux moyens de chaque bloc (filtre passe-bas grossier)
+            e3 = math.sqrt(sum(v * v for v in lp) / W)
+            z = acc[4]
+            feats.append((e0, e1, e2, e3, z, e1 / (e0 + 1.0), e3 / (e0 + 1.0), e2 / (e1 + 1.0)))
+    D = FP_DELTA
     bits = bytearray(len(feats))
     mask = bytearray(len(feats))
-    for t in range(2, len(feats)):
-        a, b = feats[t], feats[t - 2]
+    for t in range(D, len(feats)):
+        a, b = feats[t], feats[t - D]
         v = 0
         for i in range(8):
             if a[i] > b[i]:
@@ -1122,7 +1150,7 @@ def fp_match(fa, fb):
     """Cherche le passage commun le plus long. Renvoie (débutA, finA, débutB, finB) en s."""
     ba, ma = fa
     bb, mb = fb
-    STEP = 2
+    STEP = FP_DELTA
     index = {}
     for t in range(0, len(ba) - 2 * STEP):
         if ma[t] and ma[t + STEP] and ma[t + 2 * STEP]:
@@ -1131,11 +1159,11 @@ def fp_match(fa, fb):
                 continue
             index.setdefault(h, []).append(t)
     votes = {}
-    for t in range(0, len(bb) - 2 * STEP):
+    for t in range(0, len(bb) - 2 * STEP, 2):
         if mb[t] and mb[t + STEP] and mb[t + 2 * STEP]:
             h = bb[t] | (bb[t + STEP] << 8) | (bb[t + 2 * STEP] << 16)
             lst = index.get(h)
-            if lst and len(lst) < 40:
+            if lst and len(lst) < 400:
                 for i in lst:
                     votes[i - t] = votes.get(i - t, 0) + 1
     if not votes:
@@ -1146,7 +1174,7 @@ def fp_match(fa, fb):
         tot = v + votes.get(d - 1, 0) + votes.get(d + 1, 0)
         if tot > bestv:
             best, bestv = d, tot
-    if bestv < 12:
+    if bestv < 25:
         return None
     pop = [bin(i).count("1") for i in range(256)]
     lo, hi = max(0, best), min(len(ba), len(bb) + best)
@@ -1161,7 +1189,7 @@ def fp_match(fa, fb):
             if 0 <= u + dd < len(bb):
                 m = max(m, 8 - pop[ba[t] ^ bb[u + dd]])
         agree.append(m / 8.0)
-    W = 60                                 # lissage sur 3 s
+    W = 300                                # lissage sur 3 s
     acc = sum(agree[:W])
     smooth = []
     for i in range(len(agree)):
@@ -1182,10 +1210,10 @@ def fp_match(fa, fb):
     # fin +60 %), puis on affine avec la concordance brute
     a0 = run_s + int(0.4 * W)
     a1 = run_s + run_l - 1 + int(0.6 * W)
-    while a0 < a1 and sum(agree[a0:a0 + 10]) / 10 < 0.82:
-        a0 += 1
-    while a1 > a0 and sum(agree[max(0, a1 - 10):a1]) / 10 < 0.82:
-        a1 -= 1
+    while a0 < a1 and sum(agree[a0:a0 + 50]) / 50 < 0.82:
+        a0 += 5
+    while a1 > a0 and sum(agree[max(0, a1 - 50):a1]) / 50 < 0.82:
+        a1 -= 5
     length = (a1 - a0) * sec + FP_WIN / FP_RATE * 0.5
     if length < 15 or length > 200:
         return None
@@ -1239,7 +1267,7 @@ def fp_cache_path(path):
         st = os.stat(path)
     except OSError:
         return None
-    key = hashlib.sha1(f"{path}|{st.st_size}|{int(st.st_mtime)}|{FP_SECONDS}".encode("utf-8")).hexdigest()
+    key = hashlib.sha1(f"{path}|{st.st_size}|{int(st.st_mtime)}|{FP_SECONDS}|v2".encode("utf-8")).hexdigest()
     base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".cache")
     d = os.path.join(base, "Nova", "app", "fp")
     os.makedirs(d, exist_ok=True)
@@ -1339,6 +1367,7 @@ def intro_worker(args):
     result = {}
     try:
         fps = fp_get_many([target] + others)
+        result["info"] = {os.path.basename(k): round(len(v[0]) * FP_HOP / FP_RATE) for k, v in fps.items()}
         fa = fps[target]
         best = None
         for o in others:
@@ -1525,6 +1554,7 @@ class Backend(QObject):
     recentsChanged = Signal()
     introChanged = Signal()
     introFound = Signal()
+    introStatus = Signal(str)
     gainChanged = Signal()
     mutedChanged = Signal()
     subtitleTextChanged = Signal()
@@ -2504,6 +2534,7 @@ class Backend(QObject):
         cands = pick_episode_neighbors(path, getattr(self, "_queue_paths", []))
         if not cands:
             log(f"générique : aucun autre épisode trouvé à côté de {os.path.basename(path)}")
+            self.introStatus.emit("Générique : aucun autre épisode de la série trouvé à côté")
             return
         folder, name = os.path.dirname(path), os.path.basename(path)
         old = getattr(self, "_intro_proc", None)
@@ -2526,12 +2557,24 @@ class Backend(QObject):
         env.insert("NOVA_INTRO_OUT", out_file)
         proc.setProcessEnvironment(env)
         self._intro_out = out_file
-        code = ("import sys; sys.path.insert(0, sys.argv[1]); import app; app.intro_worker(sys.argv[2:])")
+        code = ("import sys, os, traceback\n"
+                "try:\n"
+                "    sys.path.insert(0, sys.argv[1]); import app; app.intro_worker(sys.argv[2:])\n"
+                "except BaseException:\n"
+                "    open(os.environ['NOVA_INTRO_OUT'], 'w', encoding='utf-8').write('ERREUR ' + traceback.format_exc())\n")
         args = ["-c", code, str(Path(__file__).resolve().parent), path] + cands
         proc.finished.connect(lambda *_: self._intro_done(proc, path))
         self._intro_proc = proc
         log(f"analyse du générique : {name} comparé à {[os.path.basename(c) for c in cands]}")
+        self._intro_names = [os.path.basename(c) for c in cands]
+        proc.errorOccurred.connect(lambda e: log(f"générique : le processus d'analyse n'a pas démarré ({e}) exe={sys.executable}"))
         proc.start(sys.executable, args)
+        self.introStatus.emit("Recherche du générique…")
+
+    @Slot()
+    def openLogFolder(self):
+        root = os.environ.get("LOCALAPPDATA") or os.path.join(Path.home(), ".local", "share")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(root) / "Nova" / "app")))
 
     @Slot(list)
     def noteQueue(self, paths):
@@ -2556,9 +2599,26 @@ class Backend(QObject):
                     out = fh.read()
             except (OSError, AttributeError):
                 pass
+        try:
+            err = bytes(proc.readAllStandardError()).decode("utf-8", "replace").strip()
+            code = proc.exitCode()
+        except Exception:  # noqa: BLE001
+            err, code = "", -1
         if getattr(self, "_intro_proc", None) is proc:
             self._intro_proc = None
         proc.deleteLater()
+        if "NOVA_INTRO " not in out:
+            try:
+                with open(self._intro_out, encoding="utf-8") as fh:
+                    out = fh.read()
+            except (OSError, AttributeError):
+                pass
+        if "NOVA_INTRO " not in out:
+            tail = "\n".join(l for l in err.splitlines() if "pw.conf" not in l)[-1500:]
+            log(f"générique : analyse échouée (code {code})\n{out[-1500:]}\n{tail}")
+            if path == getattr(self, "_intro_path", ""):
+                self.introStatus.emit("Générique : l'analyse a échoué (envoie le fichier nova.log)")
+            return
         for line in out.splitlines():
             if not line.startswith("NOVA_INTRO "):
                 continue
@@ -2568,10 +2628,17 @@ class Backend(QObject):
                 return
             if "error" in res:
                 log(f"analyse du générique impossible : {res['error']}")
+                self.introStatus.emit("Générique : l'analyse a échoué (envoie le fichier nova.log)")
                 return
             for p, v in res.items():
-                self._s.setValue(self._intro_key(p), json.dumps(v))
-            self._set_intro(path, res.get(path))
+                if p != "info":
+                    self._s.setValue(self._intro_key(p), json.dumps(v))
+            log(f"générique : résultat {res}")
+            if res.get(path):
+                self._set_intro(path, res.get(path))
+            elif path == getattr(self, "_intro_path", ""):
+                self.introStatus.emit("Générique : pas de passage commun trouvé avec "
+                                      + ", ".join(getattr(self, "_intro_names", [])))
             return
 
 
@@ -3521,6 +3588,7 @@ ApplicationWindow {
 
             Connections {
                 target: backend
+                function onIntroStatus(msg) { toast.show(msg) }
                 function onIntroFound() {
                     if (player.position / 1000 < backend.introEnd - 2)
                         toast.show("Générique repéré : bouton « Passer » disponible")
@@ -4493,6 +4561,16 @@ ApplicationWindow {
                         }
                         Text { width: 200; anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: theme.muted; font.pixelSize: 13 }
                     }
+                }
+            }
+            Row {
+                spacing: 14
+                Text { text: "Nova version " + appVersion; color: theme.muted; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                Rectangle {
+                    width: logTxt.implicitWidth + 24; height: 30; radius: 8
+                    color: logMa.containsMouse ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.08)
+                    Text { id: logTxt; anchors.centerIn: parent; text: "Ouvrir le journal (nova.log)"; color: theme.text; font.pixelSize: 12 }
+                    MouseArea { id: logMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: backend.openLogFolder() }
                 }
             }
         }

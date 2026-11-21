@@ -1,5 +1,5 @@
 {
-  "version": 18,
-  "sha256": "9009a9e07d5974b51bd145e26952205c850347ab294e81c95eb77ccd12dbd3c0",
-  "notes": "Générique : recherche des autres épisodes dans les dossiers voisins et la file d'attente, analyse des 20 premières minutes, plus rapide."
+  "version": 19,
+  "sha256": "1067c1a024157aa30fb257e4e736ab62190f7cb426ad526777ca15e0bba2b2f4",
+  "notes": "Générique : analyse plus précise, messages à l'écran pendant la recherche, version et journal dans l'aide (H)."
 }
