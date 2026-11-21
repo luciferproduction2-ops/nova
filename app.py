@@ -32,7 +32,7 @@ from PySide6.QtMultimedia import (QAudio, QAudioBufferOutput, QAudioFormat, QAud
 from PySide6.QtQuickControls2 import QQuickStyle
 
 APP_NAME = "Nova"
-APP_VERSION = 17  # augmenter à chaque mise à jour publiée
+APP_VERSION = 18  # augmenter à chaque mise à jour publiée
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv", ".ts",
@@ -1072,7 +1072,7 @@ class Limiter:
 FP_RATE = 8000             # Hz, mono
 FP_WIN = 1600              # fenêtre de 0,2 s
 FP_HOP = 400               # une mesure toutes les 0,05 s
-FP_SECONDS = 600           # on analyse les 10 premières minutes
+FP_SECONDS = 1200          # on analyse les 20 premières minutes
 EPISODE_RE = re.compile(r"(s\d{1,2}\s*[ex]\s*\d{1,3}|\b\d{1,2}x\d{1,3}\b|[ée]p(isode)?\s*\.?\s*\d{1,3}|\be\d{1,3}\b)", re.I)
 
 
@@ -1246,18 +1246,83 @@ def fp_cache_path(path):
     return os.path.join(d, key + ".bin")
 
 
-def fp_get(path):
-    cp = fp_cache_path(path)
-    if cp and os.path.exists(cp):
-        with open(cp, "rb") as fh:
-            data = fh.read()
-        h = len(data) // 2
-        return data[:h], data[h:]
-    fp = fp_features(fp_decode(path))
-    if cp and fp[0]:
-        with open(cp, "wb") as fh:
-            fh.write(fp[0] + fp[1])
-    return fp
+def fp_decode_many(paths, seconds=FP_SECONDS):
+    """Décode le début de plusieurs fichiers EN MÊME TEMPS (plus rapide)."""
+    from PySide6.QtCore import QEventLoop
+    from PySide6.QtMultimedia import QAudioDecoder
+    loop = QEventLoop()
+    want = seconds * FP_RATE * 2
+    jobs = {}
+
+    def check_done():
+        if all(j["done"] for j in jobs.values()):
+            loop.quit()
+
+    for path in paths:
+        dec = QAudioDecoder()
+        fmt = QAudioFormat()
+        fmt.setSampleRate(FP_RATE)
+        fmt.setChannelCount(1)
+        fmt.setSampleFormat(QAudioFormat.Int16)
+        dec.setAudioFormat(fmt)
+        dec.setSource(QUrl.fromLocalFile(path))
+        job = {"dec": dec, "out": bytearray(), "done": False}
+        jobs[path] = job
+
+        def on_buf(job=job):
+            dec_ = job["dec"]
+            while dec_.bufferAvailable() and not job["done"]:
+                b = dec_.read()
+                raw = b.constData()
+                try:
+                    data = bytes(raw)[: b.byteCount()]
+                except TypeError:
+                    data = raw.tobytes()[: b.byteCount()]
+                f = b.format()
+                if f.sampleRate() == FP_RATE and f.channelCount() == 1 and _ev(f.sampleFormat()) == _ev(QAudioFormat.Int16):
+                    job["out"].extend(data)
+                if len(job["out"]) >= want:
+                    job["done"] = True
+                    dec_.stop()
+                    check_done()
+
+        def on_end(*_a, job=job):
+            job["done"] = True
+            check_done()
+        dec.bufferReady.connect(on_buf)
+        dec.finished.connect(on_end)
+        dec.error.connect(on_end)
+    QTimer.singleShot(240000, loop.quit)
+    for j in jobs.values():
+        j["dec"].start()
+    if jobs:
+        loop.exec()
+    res = {}
+    for path, j in jobs.items():
+        j["dec"].stop()
+        res[path] = bytes(j["out"][:want])
+    return res
+
+
+def fp_get_many(paths):
+    out, todo = {}, []
+    for path in paths:
+        cp = fp_cache_path(path)
+        if cp and os.path.exists(cp):
+            with open(cp, "rb") as fh:
+                data = fh.read()
+            h = len(data) // 2
+            out[path] = (data[:h], data[h:])
+        else:
+            todo.append(path)
+    for path, pcm in fp_decode_many(todo).items():
+        fp = fp_features(pcm)
+        out[path] = fp
+        cp = fp_cache_path(path)
+        if cp and fp[0] and len(pcm) > FP_RATE * 2 * 60:
+            with open(cp, "wb") as fh:
+                fh.write(fp[0] + fp[1])
+    return out
 
 
 def intro_worker(args):
@@ -1273,14 +1338,17 @@ def intro_worker(args):
     target, others = args[0], args[1:]
     result = {}
     try:
-        fa = fp_get(target)
+        fps = fp_get_many([target] + others)
+        fa = fps[target]
+        best = None
         for o in others:
-            fb = fp_get(o)
-            m = fp_match(fa, fb)
-            if m:
-                result[target] = [m[0], m[1]]
-                result[o] = [m[2], m[3]]
-                break
+            m = fp_match(fa, fps[o])
+            if m and (best is None or (m[1] - m[0]) > (best[1][1] - best[1][0])):
+                best = (o, m)
+        if best:
+            o, m = best
+            result[target] = [m[0], m[1]]
+            result[o] = [m[2], m[3]]
         result.setdefault(target, None)
     except Exception as e:  # noqa: BLE001
         result["error"] = repr(e)
@@ -1379,9 +1447,84 @@ def chapters_marks(chapters, duration_s):
     return intro, credits
 
 
+EP_ID_RE = re.compile(r"s(\d{1,2})\s*[ex]\s*(\d{1,3})|\b(\d{1,2})x(\d{1,3})\b|[ée]p(?:isode)?\s*\.?\s*(\d{1,3})", re.I)
+
+
+def episode_id(name):
+    """(saison, épisode, nom de la série) d'après le nom du fichier, ou None."""
+    m = EP_ID_RE.search(name)
+    if not m:
+        return None
+    if m.group(1):
+        se, ep = int(m.group(1)), int(m.group(2))
+    elif m.group(3):
+        se, ep = int(m.group(3)), int(m.group(4))
+    else:
+        se, ep = -1, int(m.group(5))
+    series = re.sub(r"[^a-z]", "", name[:m.start()].lower())
+    return se, ep, series
+
+
+def pick_episode_neighbors(path, extra=(), limit=3):
+    """Choisit jusqu'à 3 autres épisodes de la même série, les plus proches."""
+    name = os.path.basename(path)
+    folder = os.path.dirname(path)
+    pool = set()
+
+    def add_dir(d, depth=0):
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    if e.is_file() and os.path.splitext(e.name)[1].lower() in VIDEO_EXT:
+                        pool.add(e.path)
+                    elif depth == 0 and e.is_dir() and len(pool) < 400:
+                        add_dir(e.path, 1)
+        except OSError:
+            pass
+    try:
+        with os.scandir(folder) as it:
+            for e in it:
+                if e.is_file() and os.path.splitext(e.name)[1].lower() in VIDEO_EXT:
+                    pool.add(e.path)
+    except OSError:
+        pass
+    # un épisode par dossier : on regarde aussi les dossiers voisins
+    parent = os.path.dirname(folder)
+    if parent and parent != folder and len(pool) < 3:
+        add_dir(parent)
+    for q in extra:
+        if q and os.path.isfile(q):
+            pool.add(q)
+    pool.discard(path)
+    me = episode_id(name)
+    scored = []
+    for c in pool:
+        cn = os.path.basename(c)
+        ce = episode_id(cn)
+        if me and ce:
+            if me[2] and ce[2] and me[2] != ce[2]:
+                continue                      # autre série
+            if ce[:2] == me[:2]:
+                continue                      # même épisode (autre copie)
+            score = (0 if ce[0] == me[0] else 1, abs(ce[1] - me[1]))
+        else:
+            n = 0
+            for x, y in zip(cn.lower(), name.lower()):
+                if x != y:
+                    break
+                n += 1
+            if n < max(4, int(len(name) * 0.4)):
+                continue
+            score = (2, 0)
+        scored.append((score, natural_key(cn), c))
+    scored.sort()
+    return [c for _, _, c in scored[:limit]]
+
+
 class Backend(QObject):
     recentsChanged = Signal()
     introChanged = Signal()
+    introFound = Signal()
     gainChanged = Signal()
     mutedChanged = Signal()
     subtitleTextChanged = Signal()
@@ -2301,8 +2444,11 @@ class Backend(QObject):
     def shutdown(self):
         self._stop_boost()
         proc = getattr(self, "_intro_proc", None)
-        if proc is not None and proc.state() != QProcess.NotRunning:
-            proc.kill()
+        try:
+            if proc is not None and proc.state() != QProcess.NotRunning:
+                proc.kill()
+        except RuntimeError:
+            pass
 
     # ================================================================ générique
     def _get_intro_start(self):
@@ -2320,7 +2466,7 @@ class Backend(QObject):
 
     @staticmethod
     def _intro_key(path):
-        return "intro/" + hashlib.sha1(os.path.normcase(path).encode("utf-8")).hexdigest()
+        return "intro2/" + hashlib.sha1(os.path.normcase(path).encode("utf-8")).hexdigest()
 
     def _set_intro(self, path, se):
         if path != getattr(self, "_intro_path", "") or not se:
@@ -2328,6 +2474,7 @@ class Backend(QObject):
         self._intro = (float(se[0]), float(se[1]))
         log(f"générique détecté : {se[0]:.1f}s -> {se[1]:.1f}s ({os.path.basename(path)})")
         self.introChanged.emit()
+        self.introFound.emit()
 
     def _find_intro(self, path):
         if path != getattr(self, "_intro_path", "") or not os.path.isfile(path):
@@ -2352,32 +2499,19 @@ class Backend(QObject):
             if v:
                 self._set_intro(path, v)
             return
-        # 3) comparaison avec les épisodes voisins du même dossier
-        folder, name = os.path.dirname(path), os.path.basename(path)
-        try:
-            files = sorted((e.name for e in os.scandir(folder) if e.is_file()
-                            and os.path.splitext(e.name)[1].lower() in VIDEO_EXT), key=natural_key)
-        except OSError:
-            return
-        if name not in files or len(files) < 2:
-            return
-        i = files.index(name)
-
-        def prefix_len(a, b):
-            n = 0
-            for x, y in zip(a.lower(), b.lower()):
-                if x != y:
-                    break
-                n += 1
-            return n
-        cands = [files[j] for j in (i + 1, i - 1, i + 2, i - 2) if 0 <= j < len(files)]
-        cands = [c for c in cands if EPISODE_RE.search(c) and EPISODE_RE.search(name)
-                 or prefix_len(c, name) >= max(4, int(len(name) * 0.4))][:2]
+        # 3) comparaison avec d'autres épisodes de la même série (même dossier,
+        #    dossiers voisins « Episode 9/ », ou vidéos de la file d'attente)
+        cands = pick_episode_neighbors(path, getattr(self, "_queue_paths", []))
         if not cands:
+            log(f"générique : aucun autre épisode trouvé à côté de {os.path.basename(path)}")
             return
+        folder, name = os.path.dirname(path), os.path.basename(path)
         old = getattr(self, "_intro_proc", None)
-        if old is not None and old.state() != QProcess.NotRunning:
-            old.kill()
+        try:
+            if old is not None and old.state() != QProcess.NotRunning:
+                old.kill()
+        except RuntimeError:
+            pass
         if getattr(sys, "frozen", False):
             return
         proc = QProcess(self)
@@ -2393,11 +2527,23 @@ class Backend(QObject):
         proc.setProcessEnvironment(env)
         self._intro_out = out_file
         code = ("import sys; sys.path.insert(0, sys.argv[1]); import app; app.intro_worker(sys.argv[2:])")
-        args = ["-c", code, str(Path(__file__).resolve().parent), path] + [os.path.join(folder, c) for c in cands]
+        args = ["-c", code, str(Path(__file__).resolve().parent), path] + cands
         proc.finished.connect(lambda *_: self._intro_done(proc, path))
         self._intro_proc = proc
-        log(f"analyse du générique : {name} comparé à {cands}")
+        log(f"analyse du générique : {name} comparé à {[os.path.basename(c) for c in cands]}")
         proc.start(sys.executable, args)
+
+    @Slot(list)
+    def noteQueue(self, paths):
+        """Vidéos ajoutées à la file d'attente (servent aussi à trouver le générique)."""
+        lst = getattr(self, "_queue_paths", [])
+        for p in paths:
+            p = str(p)
+            if p.startswith("file:"):
+                p = QUrl(p).toLocalFile()
+            if p not in lst:
+                lst.append(p)
+        self._queue_paths = lst[-300:]
 
     def _intro_done(self, proc, path):
         try:
@@ -2410,6 +2556,8 @@ class Backend(QObject):
                     out = fh.read()
             except (OSError, AttributeError):
                 pass
+        if getattr(self, "_intro_proc", None) is proc:
+            self._intro_proc = None
         proc.deleteLater()
         for line in out.splitlines():
             if not line.startswith("NOVA_INTRO "):
@@ -2863,6 +3011,7 @@ ApplicationWindow {
         }
         queue.append(items)
         backend.probeDurations(paths)
+        backend.noteQueue(paths)
         if (playFirst) playIndex(start)
         else toast.show(paths.length + (paths.length > 1 ? " vidéos ajoutées" : " vidéo ajoutée"))
     }
@@ -3370,6 +3519,13 @@ ApplicationWindow {
                 Text { anchors.centerIn: parent; text: "Réglage de l'image HDR…"; color: theme.muted; font.pixelSize: 14 }
             }
 
+            Connections {
+                target: backend
+                function onIntroFound() {
+                    if (player.position / 1000 < backend.introEnd - 2)
+                        toast.show("Générique repéré : bouton « Passer » disponible")
+                }
+            }
             // ---------- « Passer le générique » / « Épisode suivant »
             Rectangle {
                 id: skipBtn

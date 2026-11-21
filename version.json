@@ -1,5 +1,5 @@
 {
-  "version": 17,
-  "sha256": "029438297ee817620055b8f1b99049f3aa205cdd539961052d56c0e07b0c4e62",
-  "notes": "Bouton Passer le générique, son boosté jusqu'à +20 dB sans saturation, anti-compression des scènes sombres, lecture plus fluide."
+  "version": 18,
+  "sha256": "9009a9e07d5974b51bd145e26952205c850347ab294e81c95eb77ccd12dbd3c0",
+  "notes": "Générique : recherche des autres épisodes dans les dossiers voisins et la file d'attente, analyse des 20 premières minutes, plus rapide."
 }
