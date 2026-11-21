@@ -1,5 +1,5 @@
 {
-  "version": 16,
-  "sha256": "d78b3ba801baf08d786de8a6a38f146317ec4b5af8ae411599e081f1aa1c559f",
-  "notes": "Zones sombres HDR : suppression des petits artefacts (pixels noirs/tachés), rendu propre comme VLC."
+  "version": 17,
+  "sha256": "029438297ee817620055b8f1b99049f3aa205cdd539961052d56c0e07b0c4e62",
+  "notes": "Bouton Passer le générique, son boosté jusqu'à +20 dB sans saturation, anti-compression des scènes sombres, lecture plus fluide."
 }
